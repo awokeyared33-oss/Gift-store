@@ -297,12 +297,16 @@ fun BackupRestoreScreen(
                                 scope.launch {
                                     try {
                                         val json = viewModel.exportBackupJson()
-                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "application/json"
-                                            putExtra(Intent.EXTRA_SUBJECT, defaultFilename)
-                                            putExtra(Intent.EXTRA_TEXT, json)
+                                        if (json.length > 500_000) {
+                                            errorMessage = "Backup file is large (${json.length / 1024} KB with photos). Please use 'Backup Database Now' above to save the file directly."
+                                        } else {
+                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "application/json"
+                                                putExtra(Intent.EXTRA_SUBJECT, defaultFilename)
+                                                putExtra(Intent.EXTRA_TEXT, json)
+                                            }
+                                            context.startActivity(Intent.createChooser(shareIntent, "Share Backup JSON"))
                                         }
-                                        context.startActivity(Intent.createChooser(shareIntent, "Share Backup JSON"))
                                     } catch (e: Exception) {
                                         errorMessage = "Failed to share: ${e.localizedMessage}"
                                     }

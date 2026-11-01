@@ -19,6 +19,7 @@ import com.example.localization.AppLanguage
 import com.example.localization.AppStrings
 import com.example.localization.EnglishStrings
 import com.example.notifications.CelebrationReminderManager
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -27,6 +28,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -38,7 +40,7 @@ import java.time.temporal.ChronoUnit
 import java.time.temporal.TemporalAdjusters
 
 enum class DateFilterType {
-    TODAY, YESTERDAY, THIS_WEEK, THIS_MONTH, THIS_YEAR, ALL_TIME, CUSTOM
+    TODAY, YESTERDAY, THIS_WEEK, THIS_MONTH, LAST_3_MONTHS, LAST_6_MONTHS, THIS_YEAR, ALL_TIME, CUSTOM
 }
 
 data class UpcomingCelebrationItem(
@@ -156,6 +158,69 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Helper to calculate epoch timestamps for date filters
+    private fun getFilterTimestampRange(
+        filter: DateFilterType,
+        customRange: Pair<LocalDate, LocalDate>?
+    ): Pair<Long, Long>? {
+        val today = LocalDate.now()
+        val zone = ZoneId.systemDefault()
+        return when (filter) {
+            DateFilterType.TODAY -> {
+                val start = today.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.YESTERDAY -> {
+                val yesterday = today.minusDays(1)
+                val start = yesterday.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = today.atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.THIS_WEEK -> {
+                val startOfWeek = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+                val endOfWeek = today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY))
+                val start = startOfWeek.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = endOfWeek.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.THIS_MONTH -> {
+                val startOfMonth = today.withDayOfMonth(1)
+                val endOfMonth = today.with(TemporalAdjusters.lastDayOfMonth())
+                val start = startOfMonth.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = endOfMonth.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.LAST_3_MONTHS -> {
+                val startOf3M = today.minusMonths(3)
+                val start = startOf3M.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.LAST_6_MONTHS -> {
+                val startOf6M = today.minusMonths(6)
+                val start = startOf6M.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.THIS_YEAR -> {
+                val startOfYear = today.withDayOfYear(1)
+                val endOfYear = today.with(TemporalAdjusters.lastDayOfYear())
+                val start = startOfYear.atStartOfDay(zone).toInstant().toEpochMilli()
+                val end = endOfYear.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                Pair(start, end)
+            }
+            DateFilterType.CUSTOM -> {
+                if (customRange != null) {
+                    val start = customRange.first.atStartOfDay(zone).toInstant().toEpochMilli()
+                    val end = customRange.second.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+                    Pair(start, end)
+                } else null
+            }
+            DateFilterType.ALL_TIME -> null
+        }
+    }
+
     // Filtered Sales according to Date Filter
     val filteredSales: StateFlow<List<SaleEntity>> = combine(
         allSales,
@@ -177,6 +242,14 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
                 DateFilterType.THIS_MONTH -> {
                     saleDate.year == today.year && saleDate.month == today.month
                 }
+                DateFilterType.LAST_3_MONTHS -> {
+                    val start = today.minusMonths(3)
+                    !saleDate.isBefore(start) && !saleDate.isAfter(today)
+                }
+                DateFilterType.LAST_6_MONTHS -> {
+                    val start = today.minusMonths(6)
+                    !saleDate.isBefore(start) && !saleDate.isAfter(today)
+                }
                 DateFilterType.THIS_YEAR -> {
                     saleDate.year == today.year
                 }
@@ -190,104 +263,69 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Comprehensive Dashboard Metrics
-    val dashboardMetrics: StateFlow<DashboardMetrics> = combine(
-        allProducts,
-        allSales,
-        filteredSales
-    ) { products, sales, filtered ->
-        val validSales = sales.filter { !it.isVoided }
-        val validFiltered = filtered.filter { !it.isVoided }
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val filterSalesSummary = combine(
+        selectedDateFilter,
+        customDateRange
+    ) { filter, custom ->
+        getFilterTimestampRange(filter, custom)
+    }.flatMapLatest { range ->
+        if (range == null) {
+            repository.lifetimeSalesSummary
+        } else {
+            repository.getSalesSummaryBetween(range.first, range.second)
+        }
+    }
+
+    private val todaySalesSummary = run {
         val today = LocalDate.now()
+        val zone = ZoneId.systemDefault()
+        val todayStart = today.atStartOfDay(zone).toInstant().toEpochMilli()
+        val todayEnd = today.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli() - 1
+        repository.getSalesSummaryBetween(todayStart, todayEnd)
+    }
 
-        val todaySales = validSales.filter {
-            toLocalDate(it.saleTimestamp) == today
-        }
-
-        // Today metrics
-        var todayRev = BigDecimal.ZERO
-        var todayProf = BigDecimal.ZERO
-        todaySales.forEach {
-            todayRev = todayRev.add(BigDecimal.valueOf(it.totalRevenue))
-            todayProf = todayProf.add(BigDecimal.valueOf(it.grossProfit))
-        }
-
-        // Selected filter metrics
-        var filterRev = BigDecimal.ZERO
-        var filterProf = BigDecimal.ZERO
-        validFiltered.forEach {
-            filterRev = filterRev.add(BigDecimal.valueOf(it.totalRevenue))
-            filterProf = filterProf.add(BigDecimal.valueOf(it.grossProfit))
-        }
-
-        // Lifetime metrics
-        var lifeRev = BigDecimal.ZERO
-        var lifeProf = BigDecimal.ZERO
-        validSales.forEach {
-            lifeRev = lifeRev.add(BigDecimal.valueOf(it.totalRevenue))
-            lifeProf = lifeProf.add(BigDecimal.valueOf(it.grossProfit))
-        }
-
-        // Inventory values
-        val activeProds = products.filter { !it.isArchived }
-        var totalStock = 0
-        var inventoryCostVal = BigDecimal.ZERO
-        var lowStockCount = 0
-
-        activeProds.forEach { p ->
-            totalStock += p.stockQuantity
-            inventoryCostVal = inventoryCostVal.add(
-                FinancialCalculator.calculateInventoryValue(p.stockQuantity, BigDecimal.valueOf(p.purchasePrice))
-            )
-            if (p.stockQuantity <= p.lowStockThreshold) {
-                lowStockCount++
-            }
-        }
-
+    // Comprehensive Dashboard Metrics (Aggregated directly in SQLite for 10-year scalability)
+    val dashboardMetrics: StateFlow<DashboardMetrics> = combine(
+        repository.inventorySummary,
+        repository.lifetimeSalesSummary,
+        todaySalesSummary,
+        filterSalesSummary
+    ) { inv, lifetime, today, filterSummary ->
         DashboardMetrics(
-            selectedFilterRevenue = filterRev,
-            selectedFilterProfit = filterProf,
-            selectedFilterSalesCount = validFiltered.size,
-            todayRevenue = todayRev,
-            todayProfit = todayProf,
-            todaySalesCount = todaySales.size,
-            lifetimeRevenue = lifeRev,
-            lifetimeProfit = lifeProf,
-            lifetimeSalesCount = validSales.size,
-            totalProductsCount = activeProds.size,
-            totalInventoryStock = totalStock,
-            totalInventoryCostValue = inventoryCostVal,
-            lowStockCount = lowStockCount
+            selectedFilterRevenue = BigDecimal.valueOf(filterSummary.totalRevenue),
+            selectedFilterProfit = BigDecimal.valueOf(filterSummary.totalGrossProfit),
+            selectedFilterSalesCount = filterSummary.salesCount,
+            todayRevenue = BigDecimal.valueOf(today.totalRevenue),
+            todayProfit = BigDecimal.valueOf(today.totalGrossProfit),
+            todaySalesCount = today.salesCount,
+            lifetimeRevenue = BigDecimal.valueOf(lifetime.totalRevenue),
+            lifetimeProfit = BigDecimal.valueOf(lifetime.totalGrossProfit),
+            lifetimeSalesCount = lifetime.salesCount,
+            totalProductsCount = inv.totalProductsCount,
+            totalInventoryStock = inv.totalStockQuantity,
+            totalInventoryCostValue = BigDecimal.valueOf(inv.totalCostValue),
+            lowStockCount = inv.lowStockCount
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), DashboardMetrics())
 
-    // Best-Selling Products Performance
-    val productPerformances: StateFlow<List<ProductSalesPerformance>> = allSales.map { sales ->
-        val nonVoided = sales.filter { !it.isVoided }
-        nonVoided.groupBy { it.productNameSnapshot }
-            .map { (name, groupSales) ->
-                var qty = 0
-                var rev = BigDecimal.ZERO
-                var prof = BigDecimal.ZERO
-                groupSales.forEach { s ->
-                    qty += s.quantity
-                    rev = rev.add(BigDecimal.valueOf(s.totalRevenue))
-                    prof = prof.add(BigDecimal.valueOf(s.grossProfit))
-                }
-                ProductSalesPerformance(
-                    productName = name,
-                    totalQuantitySold = qty,
-                    totalRevenue = rev,
-                    totalProfit = prof
-                )
-            }.sortedByDescending { it.totalQuantitySold }
+    // Best-Selling Products Performance (Aggregated via SQLite compound index)
+    val productPerformances: StateFlow<List<ProductSalesPerformance>> = repository.topSellingProducts.map { rows ->
+        rows.map { row ->
+            ProductSalesPerformance(
+                productName = row.productName,
+                totalQuantitySold = row.totalQuantitySold,
+                totalRevenue = BigDecimal.valueOf(row.totalRevenue),
+                totalProfit = BigDecimal.valueOf(row.totalProfit)
+            )
+        }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Upcoming Celebrations within 7 days
+    // Upcoming Celebrations within 14 days
     val upcomingCelebrationItems: StateFlow<List<UpcomingCelebrationItem>> = combine(
         celebrations,
         customers,
-        allSales
+        repository.recentSales
     ) { cels, custs, sales ->
         val today = LocalDate.now()
         val custMap = custs.associateBy { it.id }

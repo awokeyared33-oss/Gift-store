@@ -1,18 +1,18 @@
 # MAKI BRANDS — Professional Offline Android Gift Shop Management Application
 
-Every Sale. Every Customer. Every Celebration. Under Control.
+> **Every Sale. Every Customer. Every Celebration. Under Control.**
 
-**MAKI BRANDS** is an offline, native Android application engineered for gift shops and retail businesses. It provides full inventory tracking, individual product sales execution, decimal-safe financial calculations, a genuine 13-month Ethiopian (Ge'ez) Calendar engine, customer celebration relationship management (CRM) with 7-day advance reminders, and full JSON database backup & restore.
+**MAKI BRANDS (V1.0)** is an offline, native Android application engineered for gift shops, retail boutiques, and celebratory merchandise businesses. It provides high-speed inventory tracking, individual-product sales execution, exact decimal-safe financial calculations (`BigDecimal`), a genuine 13-month Ethiopian (Ge'ez) Calendar engine, customer relationship management (CRM) with 7-day advance celebration reminders, and full JSON database backup & restore.
 
 ---
 
 ## 🌟 Key Capabilities & Features
 
 ### 1. Dashboard & Real-Time Business Analytics
-- **Live Financial Summary**: Today's and lifetime Revenue, Gross Profit, and Sales count.
-- **Inventory Status**: Total in-stock items, total inventory cost valuation (ETB), and low-stock warning alerts.
-- **Ethiopian Date Filters**: Today, Yesterday, This Week, This Month, This Year, All Time.
-- **Upcoming Celebrations**: Displays customers with birthdays or anniversaries arriving within the next 7 to 14 days, with instant Call and WhatsApp action buttons.
+- **Live Financial Summary**: Real-time calculations of Today's and Lifetime Revenue, Gross Profit, and Sales count.
+- **Inventory Status**: Total in-stock units, total inventory cost valuation (ETB), and proactive low-stock warning alerts.
+- **Ethiopian Date Presets**: Today, Yesterday, This Week, This Month, This Year, All Time.
+- **Upcoming Celebrations Carousel**: Displays customers with birthdays or anniversaries arriving within the next 7 to 14 days, with instant Call and WhatsApp action shortcuts.
 
 ### 2. Product & Inventory Management
 - **Complete Inventory Records**: Product name, category, purchase price, selling price, current stock, and low-stock threshold.
@@ -20,18 +20,18 @@ Every Sale. Every Customer. Every Celebration. Under Control.
 - **Inventory Adjustments**: Fast restock (stock additions) and adjustment workflows (damaged/lost items) with an audit trail recorded permanently in the database.
 - **Stock Indicators**: Dynamic visual badges for *In Stock*, *Low Stock*, and *Out of Stock*.
 
-### 3. Fast Individual-Product Sales System (CRITICAL)
+### 3. Fast Individual-Product Sales System
 - **Streamlined Workflow**: Search and select any product from inventory.
 - **Stock Check**: Prevents selling more items than available in inventory.
 - **Live Calculations**: Instant calculation of Total Revenue, Cost of Goods Sold, Gross Profit, and Profit Margin % using decimal-safe `BigDecimal` math.
 - **Customer Association**: Optional link to existing customers for CRM tracking.
 - **Immutable Snapshots**: Preserves historical purchase price and selling price snapshots permanently inside each transaction.
 - **Duplicate Prevention**: Confirmation modal prevents accidental multiple taps.
-- **Receipt Modal**: Digital receipt summary ready to share or print.
+- **Digital Receipt Modal**: Clean receipt summary ready to view, print, or share.
 
 ### 4. Lifetime Sales History & Safe Void / Refund
 - **Structured Audit Table**: Date (Ethiopian Calendar), Product, Quantity, Purchase Price, Selling Price, Revenue, and Gross Profit.
-- **Filtering**: Filter by date presets, product name, or customer name with instant aggregate recalculation.
+- **Filtering & Search**: Filter by date presets, product name, or customer name with instant aggregate recalculation.
 - **Void / Refund Workflow**: Allows voiding accidental sales with a recorded reason; restores inventory stock back to the product automatically inside a database transaction.
 
 ### 5. Genuine Ethiopian (Ge'ez) Calendar Engine
@@ -60,18 +60,43 @@ Every Sale. Every Customer. Every Celebration. Under Control.
 ## 🛠 Architecture & Tech Stack
 
 - **Language**: Kotlin 2.2+
-- **UI Framework**: Jetpack Compose with Material 3 (Light/White professional corporate theme)
-- **Architecture**: Clean Architecture with MVVM & Repository pattern
-- **Local Persistence**: Android Room Database (SQLite) with KSP
+- **UI Framework**: Jetpack Compose with Material 3 (White/Teal corporate clean theme)
+- **Architecture**: MVVM with Repository Pattern & Clean Architecture separation
+- **Local Persistence**: Android Room Database (SQLite) with KSP & Compound Indexing (Schema v4)
 - **Concurrency**: Kotlin Coroutines & Flow
 - **Math Engine**: Decimal-safe `BigDecimal` for currency and inventory
-- **Platform**: Native Android (minSdk 24, targetSdk 36)
+- **Target Platform**: Android API 24 (Nougat) up to API 36 (Android 16)
+- **Application ID**: `com.aistudio.makibrands.mkgft`
 
 ---
 
-## 🚀 How to Build and Run
+## 🚀 How to Open, Build, and Run in Android Studio
 
-1. Open project in **Android Studio** or AI Studio.
-2. Ensure JDK 11 or higher is selected.
-3. Run `gradle assembleDebug` to compile the debug APK.
-4. Run unit and Robolectric tests: `gradle :app:testDebugUnitTest`.
+1. **Prerequisites**:
+   - Android Studio Ladybug (2024.2+) or newer.
+   - Java Development Kit (JDK) 11, 17, or 21.
+   - Android SDK with API 34+ installed.
+
+2. **Opening the Project**:
+   - Extract `MAKI_BRANDS_V1_COMPLETE_SOURCE_CODE.zip` to your desired folder.
+   - Launch Android Studio.
+   - Select **File > Open...** and choose the extracted root folder.
+   - Wait for Android Studio to index the project and sync Gradle files.
+
+3. **Building the APK**:
+   - Via Terminal in Android Studio:
+     ```bash
+     ./gradlew assembleDebug
+     ```
+   - Or in the menu: **Build > Build Bundle(s) / APK(s) > Build APK(s)**.
+   - The compiled installable APK will be in `app/build/outputs/apk/debug/app-debug.apk`.
+
+4. **Running Unit & Stress Tests**:
+   - Run in terminal:
+     ```bash
+     ./gradlew test
+     ```
+   - Includes 26 automated unit and 10-year scalability stress tests (all passing).
+
+5. **Release Signing**:
+   - To sign a release build, configure your keystore path, store password, and key alias in your environment or `app/build.gradle.kts`.

@@ -2,6 +2,8 @@ package com.example.ui.customers
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -147,12 +149,21 @@ fun CustomerProfileScreen(
                             .background(MakiLightBlue),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = customer.fullName.take(1).uppercase(),
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = MakiPrimaryBlue
-                        )
+                        if (customer.photoUri.isNotBlank()) {
+                            AsyncImage(
+                                model = customer.photoUri,
+                                contentDescription = customer.fullName,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Text(
+                                text = customer.fullName.take(1).uppercase(),
+                                fontSize = 32.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MakiPrimaryBlue
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(12.dp))

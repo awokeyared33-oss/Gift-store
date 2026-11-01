@@ -711,4 +711,78 @@ class MakiBusinessLogicTest {
         assertEquals(BigDecimal.ZERO, FinancialCalculator.calculateInventoryValue(0, BigDecimal("100.00")))
         assertEquals(BigDecimal.ZERO, FinancialCalculator.calculateRevenue(-5, BigDecimal("100.00")))
     }
+
+    @Test
+    fun testRestoreCustomerWithFileUriAndBrokenPhotoReferenceSanitization() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val testRepo = MakiRepository(db, context)
+
+        // 1. Create a simulated local avatar file
+        val photoDir = java.io.File(context.filesDir, "customer_photos").apply { mkdirs() }
+        val testImageFile = java.io.File(photoDir, "test_file_uri_${System.currentTimeMillis()}.jpg")
+        testImageFile.writeBytes("IMAGE_BYTES_123".toByteArray(Charsets.UTF_8))
+
+        // Save with file:// prefix
+        val cId = testRepo.saveCustomer(
+            CustomerEntity(
+                fullName = "Tigist Alemu",
+                phoneNumber = "0912345678",
+                photoUri = "file://${testImageFile.absolutePath}"
+            )
+        )
+
+        // Export JSON
+        val json = testRepo.exportBackupJson()
+        assertTrue(json.contains("\"photoBase64\""))
+
+        // Delete local file to simulate new device restore
+        testImageFile.delete()
+
+        // Restore
+        testRepo.restoreBackupJson(json)
+
+        val restored = db.customerDao().getCustomerById(cId)
+        assertNotNull(restored)
+        assertTrue(restored!!.photoUri.isNotBlank())
+        assertTrue(java.io.File(restored.photoUri).exists())
+
+        // Also test sanitizing broken reference when photoBase64 is empty
+        val jsonWithDanglingPath = """
+            {
+              "schema_version": 2,
+              "customers": [
+                {
+                  "id": 999,
+                  "fullName": "Ghost Customer",
+                  "phoneNumber": "0900000000",
+                  "photoUri": "/non/existent/path/avatar.jpg",
+                  "photoBase64": "",
+                  "city": "Addis Ababa"
+                }
+              ]
+            }
+        """.trimIndent()
+        testRepo.restoreBackupJson(jsonWithDanglingPath)
+        val ghost = db.customerDao().getCustomerById(999)
+        assertNotNull(ghost)
+        assertEquals("", ghost!!.photoUri) // Broken reference must be safely sanitized
+    }
+
+    @Test
+    fun testNotificationReceiverHandlesTimezoneAndClockChanges() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val receiver = com.example.notifications.CelebrationReminderReceiver()
+
+        // Test BOOT_COMPLETED
+        val bootIntent = android.content.Intent(android.content.Intent.ACTION_BOOT_COMPLETED)
+        receiver.onReceive(context, bootIntent)
+
+        // Test TIMEZONE_CHANGED
+        val tzIntent = android.content.Intent(android.content.Intent.ACTION_TIMEZONE_CHANGED)
+        receiver.onReceive(context, tzIntent)
+
+        // Test TIME_CHANGED
+        val timeIntent = android.content.Intent(android.content.Intent.ACTION_TIME_CHANGED)
+        receiver.onReceive(context, timeIntent)
+    }
 }

@@ -41,7 +41,7 @@ import androidx.room.migration.Migration
         ExpenseEntity::class,
         AppSettingsEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class MakiDatabase : RoomDatabase() {
@@ -67,6 +67,22 @@ abstract class MakiDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_products_isArchived_name ON products(isArchived, name)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_products_isArchived_stockQuantity_lowStockThreshold ON products(isArchived, stockQuantity, lowStockThreshold)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_isVoided_saleTimestamp ON sales(isVoided, saleTimestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_customerId_isVoided_saleTimestamp ON sales(customerId, isVoided, saleTimestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_sales_isVoided_productNameSnapshot ON sales(isVoided, productNameSnapshot)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_inventory_movements_productId_timestamp ON inventory_movements(productId, timestamp)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_customers_isArchived_fullName ON customers(isArchived, fullName)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_celebrations_isActive_ethMonth_ethDay ON celebrations(isActive, ethMonth, ethDay)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_celebrations_customerId_isActive ON celebrations(customerId, isActive)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_previous_gifts_customerId_createdAt ON previous_gifts(customerId, createdAt)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_expenses_timestamp ON expenses(timestamp)")
+            }
+        }
+
         fun getDatabase(context: Context): MakiDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -74,7 +90,7 @@ abstract class MakiDatabase : RoomDatabase() {
                     MakiDatabase::class.java,
                     "maki_brands.db"
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration(false)
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {

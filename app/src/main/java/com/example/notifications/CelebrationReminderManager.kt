@@ -180,6 +180,16 @@ object CelebrationReminderManager {
             builder.addAction(android.R.drawable.ic_menu_call, "Call Customer", pendingCall)
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (androidx.core.content.ContextCompat.checkSelfPermission(
+                    context,
+                    android.Manifest.permission.POST_NOTIFICATIONS
+                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+        }
+
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(notificationId, builder.build())
     }
@@ -187,7 +197,11 @@ object CelebrationReminderManager {
 
 class CelebrationReminderReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED) {
+        val action = intent.action
+        if (action == Intent.ACTION_BOOT_COMPLETED ||
+            action == Intent.ACTION_TIMEZONE_CHANGED ||
+            action == Intent.ACTION_TIME_CHANGED
+        ) {
             CelebrationReminderManager.schedulePeriodicReminderCheck(context)
         }
         CelebrationReminderManager.checkAndNotifyCelebrations(context)

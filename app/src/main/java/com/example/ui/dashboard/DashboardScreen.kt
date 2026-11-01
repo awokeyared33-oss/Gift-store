@@ -344,6 +344,8 @@ fun DashboardScreen(
                                         DateFilterType.YESTERDAY -> if (isAmharic) "ትናንት" else "Yesterday"
                                         DateFilterType.THIS_WEEK -> if (isAmharic) "በዚህ ሳምንት" else "This Week"
                                         DateFilterType.THIS_MONTH -> if (isAmharic) "በዚህ ወር" else "This Month"
+                                        DateFilterType.LAST_3_MONTHS -> if (isAmharic) "የ 3 ወር" else "3 Months"
+                                        DateFilterType.LAST_6_MONTHS -> if (isAmharic) "የ 6 ወር" else "6 Months"
                                         DateFilterType.THIS_YEAR -> if (isAmharic) "በዚህ ዓመት" else "This Year"
                                         DateFilterType.ALL_TIME -> if (isAmharic) "ሁልጊዜ" else "All Time"
                                         DateFilterType.CUSTOM -> if (isAmharic) "ብጁ" else "Custom"
@@ -369,6 +371,8 @@ fun DashboardScreen(
                                     DateFilterType.TODAY to (if (isAmharic) "ዛሬ" else "Today"),
                                     DateFilterType.THIS_WEEK to (if (isAmharic) "በዚህ ሳምንት" else "This Week"),
                                     DateFilterType.THIS_MONTH to (if (isAmharic) "በዚህ ወር" else "This Month"),
+                                    DateFilterType.LAST_3_MONTHS to (if (isAmharic) "የ 3 ወር" else "3 Months"),
+                                    DateFilterType.LAST_6_MONTHS to (if (isAmharic) "የ 6 ወር" else "6 Months"),
                                     DateFilterType.THIS_YEAR to (if (isAmharic) "በዚህ ዓመት" else "This Year"),
                                     DateFilterType.ALL_TIME to (if (isAmharic) "ሁልጊዜ" else "All Time")
                                 ).forEach { (type, label) ->

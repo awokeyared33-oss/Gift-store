@@ -99,6 +99,8 @@ fun ReportsScreen(
                 DateFilterType.YESTERDAY to strings.filterYesterday,
                 DateFilterType.THIS_WEEK to strings.filterThisWeek,
                 DateFilterType.THIS_MONTH to strings.filterThisMonth,
+                DateFilterType.LAST_3_MONTHS to strings.filterLast3Months,
+                DateFilterType.LAST_6_MONTHS to strings.filterLast6Months,
                 DateFilterType.THIS_YEAR to strings.filterThisYear,
                 DateFilterType.ALL_TIME to strings.filterAllTime
             ).forEach { (filterType, label) ->

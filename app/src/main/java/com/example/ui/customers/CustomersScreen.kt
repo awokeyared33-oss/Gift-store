@@ -86,6 +86,10 @@ fun CustomersScreen(
     var customerToAddCelebration by remember { mutableStateOf<CustomerEntity?>(null) }
     var customerToDelete by remember { mutableStateOf<CustomerEntity?>(null) }
 
+    val celebrationsByCustomer = remember(celebrations) {
+        celebrations.groupBy { it.customerId }
+    }
+
     val filteredCustomers = remember(customers, searchQuery) {
         if (searchQuery.isBlank()) customers
         else customers.filter {
@@ -223,7 +227,7 @@ fun CustomersScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 24.dp)
             ) {
                 items(filteredCustomers, key = { it.id }) { customer ->
-                    val customerCelebrations = celebrations.filter { it.customerId == customer.id }
+                    val customerCelebrations = celebrationsByCustomer[customer.id].orEmpty()
                     val topCelebration = customerCelebrations.firstOrNull()
 
                     CustomerListItemCard(

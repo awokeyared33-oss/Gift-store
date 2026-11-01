@@ -9,7 +9,9 @@ import androidx.room.PrimaryKey
     indices = [
         Index(value = ["name"]),
         Index(value = ["category"]),
-        Index(value = ["isArchived"])
+        Index(value = ["isArchived"]),
+        Index(value = ["isArchived", "name"]),
+        Index(value = ["isArchived", "stockQuantity", "lowStockThreshold"])
     ]
 )
 data class ProductEntity(
@@ -40,7 +42,10 @@ data class CategoryEntity(
         Index(value = ["saleTimestamp"]),
         Index(value = ["productId"]),
         Index(value = ["customerId"]),
-        Index(value = ["isVoided"])
+        Index(value = ["isVoided"]),
+        Index(value = ["isVoided", "saleTimestamp"]),
+        Index(value = ["customerId", "isVoided", "saleTimestamp"]),
+        Index(value = ["isVoided", "productNameSnapshot"])
     ]
 )
 data class SaleEntity(
@@ -68,7 +73,8 @@ data class SaleEntity(
     tableName = "inventory_movements",
     indices = [
         Index(value = ["productId"]),
-        Index(value = ["timestamp"])
+        Index(value = ["timestamp"]),
+        Index(value = ["productId", "timestamp"])
     ]
 )
 data class InventoryMovementEntity(
@@ -90,7 +96,8 @@ data class InventoryMovementEntity(
     indices = [
         Index(value = ["fullName"]),
         Index(value = ["phoneNumber"]),
-        Index(value = ["isArchived"])
+        Index(value = ["isArchived"]),
+        Index(value = ["isArchived", "fullName"])
     ]
 )
 data class CustomerEntity(
@@ -116,7 +123,9 @@ data class CustomerEntity(
     tableName = "celebrations",
     indices = [
         Index(value = ["customerId"]),
-        Index(value = ["isActive"])
+        Index(value = ["isActive"]),
+        Index(value = ["isActive", "ethMonth", "ethDay"]),
+        Index(value = ["customerId", "isActive"])
     ]
 )
 data class CelebrationEntity(
@@ -139,7 +148,8 @@ data class CelebrationEntity(
 @Entity(
     tableName = "previous_gifts",
     indices = [
-        Index(value = ["customerId"])
+        Index(value = ["customerId"]),
+        Index(value = ["customerId", "createdAt"])
     ]
 )
 data class PreviousGiftEntity(
@@ -157,7 +167,12 @@ data class PreviousGiftEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-@Entity(tableName = "expenses")
+@Entity(
+    tableName = "expenses",
+    indices = [
+        Index(value = ["timestamp"])
+    ]
+)
 data class ExpenseEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,

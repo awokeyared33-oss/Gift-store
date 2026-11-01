@@ -36,6 +36,44 @@ class MakiRepository(
     val allCelebrations: Flow<List<CelebrationEntity>> = db.celebrationDao().getAllCelebrations()
     val activeCelebrations: Flow<List<CelebrationEntity>> = db.celebrationDao().getActiveCelebrations()
     val allExpenses: Flow<List<ExpenseEntity>> = db.expenseDao().getAllExpenses()
+    val recentSales: Flow<List<SaleEntity>> = db.saleDao().getRecentSales(100)
+    val recentMovements: Flow<List<InventoryMovementEntity>> = db.inventoryMovementDao().getRecentMovements(100)
+    val inventorySummary: Flow<com.example.data.local.dao.InventorySummary> = db.productDao().getInventorySummary()
+    val lifetimeSalesSummary: Flow<com.example.data.local.dao.SalesSummary> = db.saleDao().getLifetimeSalesSummary()
+    val topSellingProducts: Flow<List<com.example.data.local.dao.ProductSalesPerformanceRow>> = db.saleDao().getTopSellingProducts(10)
+
+    fun getSalesSummaryBetween(start: Long, end: Long): Flow<com.example.data.local.dao.SalesSummary> =
+        db.saleDao().getSalesSummaryBetween(start, end)
+
+    fun getTopSellingProducts(limit: Int = 10): Flow<List<com.example.data.local.dao.ProductSalesPerformanceRow>> =
+        db.saleDao().getTopSellingProducts(limit)
+
+    suspend fun getSalesPaged(limit: Int, offset: Int): List<SaleEntity> = withContext(Dispatchers.IO) {
+        db.saleDao().getSalesPaged(limit, offset)
+    }
+
+    suspend fun getSalesBetweenPaged(start: Long, end: Long, limit: Int, offset: Int): List<SaleEntity> = withContext(Dispatchers.IO) {
+        db.saleDao().getSalesBetweenPaged(start, end, limit, offset)
+    }
+
+    suspend fun searchProductsPaged(query: String, limit: Int, offset: Int): List<ProductEntity> = withContext(Dispatchers.IO) {
+        db.productDao().searchProductsPaged(query, limit, offset)
+    }
+
+    suspend fun getActiveProductsPaged(limit: Int, offset: Int): List<ProductEntity> = withContext(Dispatchers.IO) {
+        db.productDao().getActiveProductsPaged(limit, offset)
+    }
+
+    suspend fun searchCustomersPaged(query: String, limit: Int, offset: Int): List<CustomerEntity> = withContext(Dispatchers.IO) {
+        db.customerDao().searchCustomersPaged(query, limit, offset)
+    }
+
+    suspend fun getActiveCustomersPaged(limit: Int, offset: Int): List<CustomerEntity> = withContext(Dispatchers.IO) {
+        db.customerDao().getActiveCustomersPaged(limit, offset)
+    }
+
+    fun getRecentSalesForCustomer(customerId: Long, limit: Int = 10): Flow<List<SaleEntity>> =
+        db.saleDao().getRecentSalesForCustomer(customerId, limit)
 
     fun getSalesForCustomer(customerId: Long): Flow<List<SaleEntity>> =
         db.saleDao().getSalesForCustomer(customerId)
@@ -312,7 +350,7 @@ class MakiRepository(
     // --- Backup & Restore ---
     suspend fun exportBackupJson(): String = withContext(Dispatchers.IO) {
         val root = JSONObject()
-        root.put("schema_version", 2)
+        root.put("schema_version", 4)
         root.put("app_name", "MAKI BRANDS")
         root.put("app_version", "1.0.0")
         root.put("export_timestamp", System.currentTimeMillis())
@@ -381,7 +419,8 @@ class MakiRepository(
                 obj.put("photoUri", uriStr)
                 if (uriStr.isNotBlank()) {
                     try {
-                        val file = java.io.File(uriStr)
+                        val filePath = if (uriStr.startsWith("file://")) uriStr.removePrefix("file://") else uriStr
+                        val file = java.io.File(filePath)
                         if (file.exists() && file.length() < 2 * 1024 * 1024) {
                             val b64 = android.util.Base64.encodeToString(file.readBytes(), android.util.Base64.NO_WRAP)
                             obj.put("photoBase64", b64)
@@ -530,7 +569,7 @@ class MakiRepository(
     suspend fun parseBackupPreview(jsonContent: String): BackupPreview = withContext(Dispatchers.Default) {
         val root = JSONObject(jsonContent)
         val schemaVersion = root.optInt("schema_version", 1)
-        if (schemaVersion <= 0 || schemaVersion > 3) {
+        if (schemaVersion <= 0 || schemaVersion > 4) {
             throw IllegalArgumentException("Unsupported backup format or schema version: $schemaVersion")
         }
         val exportTimestamp = root.optLong("export_timestamp", 0L)
@@ -558,7 +597,7 @@ class MakiRepository(
     suspend fun restoreBackupJson(jsonContent: String) = withContext(Dispatchers.IO) {
         val root = JSONObject(jsonContent)
         val schemaVersion = root.optInt("schema_version", 0)
-        if (schemaVersion <= 0 || schemaVersion > 3) {
+        if (schemaVersion <= 0 || schemaVersion > 4) {
             throw IllegalArgumentException("Unsupported or invalid backup file schema version: $schemaVersion")
         }
 
@@ -647,10 +686,12 @@ class MakiRepository(
                         restoredFile.writeBytes(bytes)
                         restoredFile.absolutePath
                     } catch (e: Exception) {
-                        photoUriStr
+                        val checkFile = java.io.File(if (photoUriStr.startsWith("file://")) photoUriStr.removePrefix("file://") else photoUriStr)
+                        if (checkFile.exists()) photoUriStr else ""
                     }
                 } else {
-                    photoUriStr
+                    val checkFile = java.io.File(if (photoUriStr.startsWith("file://")) photoUriStr.removePrefix("file://") else photoUriStr)
+                    if (checkFile.exists()) photoUriStr else ""
                 }
 
                 customers.add(
@@ -789,19 +830,19 @@ class MakiRepository(
             db.expenseDao().clearAll()
             if (categories.isNotEmpty()) {
                 db.categoryDao().clearAll()
-                db.categoryDao().insertAll(categories)
+                categories.chunked(500).forEach { db.categoryDao().insertAll(it) }
             }
 
-            if (products.isNotEmpty()) db.productDao().insertAll(products)
-            if (sales.isNotEmpty()) db.saleDao().insertAll(sales)
-            if (customers.isNotEmpty()) db.customerDao().insertAll(customers)
-            if (celebrations.isNotEmpty()) db.celebrationDao().insertAll(celebrations)
-            if (movements.isNotEmpty()) db.inventoryMovementDao().insertAll(movements)
-            if (previousGifts.isNotEmpty()) db.previousGiftDao().insertAll(previousGifts)
-            if (expenses.isNotEmpty()) db.expenseDao().insertAll(expenses)
+            if (products.isNotEmpty()) products.chunked(500).forEach { db.productDao().insertAll(it) }
+            if (sales.isNotEmpty()) sales.chunked(500).forEach { db.saleDao().insertAll(it) }
+            if (customers.isNotEmpty()) customers.chunked(500).forEach { db.customerDao().insertAll(it) }
+            if (celebrations.isNotEmpty()) celebrations.chunked(500).forEach { db.celebrationDao().insertAll(it) }
+            if (movements.isNotEmpty()) movements.chunked(500).forEach { db.inventoryMovementDao().insertAll(it) }
+            if (previousGifts.isNotEmpty()) previousGifts.chunked(500).forEach { db.previousGiftDao().insertAll(it) }
+            if (expenses.isNotEmpty()) expenses.chunked(500).forEach { db.expenseDao().insertAll(it) }
             if (settings.isNotEmpty()) {
                 db.appSettingsDao().clearAll()
-                db.appSettingsDao().insertAll(settings)
+                settings.chunked(500).forEach { db.appSettingsDao().insertAll(it) }
             }
         }
     }
