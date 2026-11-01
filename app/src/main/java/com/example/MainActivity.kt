@@ -3,7 +3,9 @@ package com.example
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.foundation.border
@@ -49,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.local.entity.CustomerEntity
+import com.example.notifications.CelebrationReminderManager
 import com.example.ui.backup.BackupRestoreScreen
 import com.example.ui.celebrations.CelebrationsScreen
 import com.example.ui.customers.CustomerProfileScreen
@@ -92,6 +95,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        CelebrationReminderManager.schedulePeriodicReminderCheck(this)
+        CelebrationReminderManager.checkAndNotifyCelebrations(this)
 
         setContent {
             MakiBrandsTheme {
@@ -101,6 +106,27 @@ class MainActivity : ComponentActivity() {
                 var selectedCustomerForProfile by remember { mutableStateOf<CustomerEntity?>(null) }
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
+
+                // Android 13+ Notification Permission Request
+                val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+                ) { isGranted ->
+                    if (isGranted) {
+                        CelebrationReminderManager.checkAndNotifyCelebrations(context)
+                    }
+                }
+
+                LaunchedEffect(Unit) {
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                context,
+                                android.Manifest.permission.POST_NOTIFICATIONS
+                            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
 
                 // Listen to ViewModel user messages & toasts
                 LaunchedEffect(Unit) {

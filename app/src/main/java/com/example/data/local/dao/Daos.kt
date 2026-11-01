@@ -117,6 +117,9 @@ interface CustomerDao {
     @Query("SELECT * FROM customers ORDER BY fullName ASC")
     fun getAllCustomers(): Flow<List<CustomerEntity>>
 
+    @Query("SELECT * FROM customers WHERE isArchived = 0 ORDER BY fullName ASC")
+    fun getActiveCustomers(): Flow<List<CustomerEntity>>
+
     @Query("SELECT * FROM customers WHERE id = :id LIMIT 1")
     suspend fun getCustomerById(id: Long): CustomerEntity?
 
@@ -128,6 +131,9 @@ interface CustomerDao {
 
     @Update
     suspend fun update(customer: CustomerEntity)
+
+    @Query("UPDATE customers SET isArchived = 1 WHERE id = :id")
+    suspend fun archiveCustomer(id: Long)
 
     @Delete
     suspend fun delete(customer: CustomerEntity)

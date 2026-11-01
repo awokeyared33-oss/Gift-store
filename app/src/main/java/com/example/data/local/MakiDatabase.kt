@@ -27,6 +27,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+import androidx.room.migration.Migration
+
 @Database(
     entities = [
         ProductEntity::class,
@@ -39,7 +41,7 @@ import kotlinx.coroutines.launch
         ExpenseEntity::class,
         AppSettingsEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class MakiDatabase : RoomDatabase() {
@@ -57,6 +59,14 @@ abstract class MakiDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: MakiDatabase? = null
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE customers ADD COLUMN photoUri TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE customers ADD COLUMN isArchived INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_customers_isArchived ON customers(isArchived)")
+            }
+        }
+
         fun getDatabase(context: Context): MakiDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -64,7 +74,8 @@ abstract class MakiDatabase : RoomDatabase() {
                     MakiDatabase::class.java,
                     "maki_brands.db"
                 )
-                    .fallbackToDestructiveMigration(true)
+                    .addMigrations(MIGRATION_2_3)
+                    .fallbackToDestructiveMigration(false)
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)

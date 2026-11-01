@@ -89,7 +89,8 @@ data class InventoryMovementEntity(
     tableName = "customers",
     indices = [
         Index(value = ["fullName"]),
-        Index(value = ["phoneNumber"])
+        Index(value = ["phoneNumber"]),
+        Index(value = ["isArchived"])
     ]
 )
 data class CustomerEntity(
@@ -98,6 +99,7 @@ data class CustomerEntity(
     val fullName: String,
     val phoneNumber: String,
     val alternativePhone: String = "",
+    val photoUri: String = "",
     val gender: String = "",
     val address: String = "",
     val city: String = "Addis Ababa",
@@ -106,6 +108,7 @@ data class CustomerEntity(
     val preferredLanguage: String = "English",
     val preferredContactMethod: String = "WhatsApp",
     val marketingConsent: Boolean = true,
+    val isArchived: Boolean = false,
     val createdAt: Long = System.currentTimeMillis()
 )
 

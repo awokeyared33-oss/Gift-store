@@ -76,7 +76,7 @@ data class ProductSalesPerformance(
 class MakiViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = MakiDatabase.getDatabase(application)
-    val repository = MakiRepository(db)
+    val repository = MakiRepository(db, application)
 
     // Language State
     private val _currentLanguage = MutableStateFlow(AppLanguage.ENGLISH)
@@ -115,8 +115,15 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
     val customers: StateFlow<List<CustomerEntity>> = repository.allCustomers
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val activeCustomers: StateFlow<List<CustomerEntity>> = repository.activeCustomers
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val celebrations: StateFlow<List<CelebrationEntity>> = repository.activeCelebrations
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Timezone-safe epoch millis to LocalDate conversion
+    private fun toLocalDate(ts: Long): LocalDate =
+        java.time.Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).toLocalDate()
 
     // Date Filter State
     private val _selectedDateFilter = MutableStateFlow(DateFilterType.TODAY)
@@ -156,8 +163,6 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
         customDateRange
     ) { sales, filter, custom ->
         val today = LocalDate.now()
-        val zone = ZoneId.systemDefault()
-        fun toLocalDate(ts: Long) = LocalDate.ofEpochDay(ts / (1000 * 60 * 60 * 24))
 
         sales.filter { sale ->
             val saleDate = toLocalDate(sale.saleTimestamp)
@@ -196,7 +201,7 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
         val today = LocalDate.now()
 
         val todaySales = validSales.filter {
-            LocalDate.ofEpochDay(it.saleTimestamp / (1000 * 60 * 60 * 24)) == today
+            toLocalDate(it.saleTimestamp) == today
         }
 
         // Today metrics
@@ -292,7 +297,8 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
             val nextDate = EthiopianCalendarConverter.getNextCelebrationDate(
                 fromDate = today,
                 ethMonth = cel.ethMonth,
-                ethDay = cel.ethDay
+                ethDay = cel.ethDay,
+                recurrenceCycle = cel.recurrenceCycle
             )
             val daysUntil = ChronoUnit.DAYS.between(today, nextDate)
 
@@ -364,6 +370,22 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
+                if (name.isBlank()) {
+                    _userMessage.emit("Product name cannot be empty")
+                    return@launch
+                }
+                if (purchasePrice < 0 || sellingPrice < 0) {
+                    _userMessage.emit("Prices cannot be negative")
+                    return@launch
+                }
+                if (stockQuantity < 0) {
+                    _userMessage.emit("Stock quantity cannot be negative")
+                    return@launch
+                }
+                if (lowStockThreshold < 0) {
+                    _userMessage.emit("Low stock threshold cannot be negative")
+                    return@launch
+                }
                 val product = ProductEntity(
                     id = id,
                     name = name.trim(),
@@ -423,22 +445,61 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
         id: Long = 0,
         name: String,
         phone: String,
+        alternativePhone: String = "",
+        photoUri: String = "",
+        gender: String = "",
+        address: String = "",
+        city: String = "Addis Ababa",
         notes: String = "",
+        giftPreferences: String = "",
+        preferredLanguage: String = "English",
+        preferredContactMethod: String = "WhatsApp",
+        marketingConsent: Boolean = true,
         onComplete: (Long) -> Unit
     ) {
         viewModelScope.launch {
             try {
+                if (name.isBlank()) {
+                    _userMessage.emit("Customer name cannot be empty")
+                    return@launch
+                }
+                if (phone.isBlank()) {
+                    _userMessage.emit("Phone number cannot be empty")
+                    return@launch
+                }
                 val cust = CustomerEntity(
                     id = id,
                     fullName = name.trim(),
                     phoneNumber = phone.trim(),
-                    notes = notes.trim()
+                    alternativePhone = alternativePhone.trim(),
+                    photoUri = photoUri.trim(),
+                    gender = gender.trim(),
+                    address = address.trim(),
+                    city = city.trim(),
+                    notes = notes.trim(),
+                    giftPreferences = giftPreferences.trim(),
+                    preferredLanguage = preferredLanguage,
+                    preferredContactMethod = preferredContactMethod,
+                    marketingConsent = marketingConsent,
+                    isArchived = false
                 )
                 val newId = repository.saveCustomer(cust)
                 _userMessage.emit("Customer saved: $name")
                 onComplete(newId)
             } catch (e: Exception) {
                 _userMessage.emit(e.localizedMessage ?: "Failed to save customer")
+            }
+        }
+    }
+
+    fun archiveCustomer(id: Long, onComplete: () -> Unit) {
+        viewModelScope.launch {
+            try {
+                repository.archiveCustomer(id)
+                _userMessage.emit("Customer archived.")
+                onComplete()
+            } catch (e: Exception) {
+                _userMessage.emit(e.localizedMessage ?: "Failed to archive customer")
             }
         }
     }
@@ -468,6 +529,18 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         viewModelScope.launch {
             try {
+                if (name.isBlank()) {
+                    _userMessage.emit("Celebration name cannot be empty")
+                    return@launch
+                }
+                if (ethMonth !in 1..13) {
+                    _userMessage.emit("Ethiopian month must be between 1 and 13")
+                    return@launch
+                }
+                if (ethDay !in 1..30) {
+                    _userMessage.emit("Ethiopian day must be between 1 and 30")
+                    return@launch
+                }
                 val cel = CelebrationEntity(
                     id = id,
                     customerId = customerId,

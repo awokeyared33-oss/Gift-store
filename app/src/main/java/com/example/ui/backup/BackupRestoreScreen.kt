@@ -404,6 +404,12 @@ fun BackupRestoreScreen(
                     Text("${strings.salesToRestore}: ${preview.saleCount}", fontWeight = FontWeight.SemiBold)
                     Text("${strings.customersToRestore}: ${preview.customerCount}", fontWeight = FontWeight.SemiBold)
                     Text("${strings.celebrationsToRestore}: ${preview.celebrationCount}", fontWeight = FontWeight.SemiBold)
+                    if (preview.movementCount > 0) {
+                        Text("Inventory Movements: ${preview.movementCount}", fontWeight = FontWeight.SemiBold)
+                    }
+                    if (preview.expenseCount > 0) {
+                        Text("Expenses: ${preview.expenseCount}", fontWeight = FontWeight.SemiBold)
+                    }
                 }
             },
             confirmButton = {

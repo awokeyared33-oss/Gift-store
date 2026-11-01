@@ -1,5 +1,9 @@
 package com.example.ui.customers
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,11 +48,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.example.domain.calendar.EthiopianCalendarConverter
 import com.example.domain.calendar.EthiopianDate
 import com.example.ui.components.EthiopianDatePickerDialog
@@ -68,10 +75,34 @@ fun CustomerRegistrationScreen(
     onCustomerSaved: (Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val strings by viewModel.strings.collectAsStateWithLifecycle()
+
+    val context = androidx.compose.ui.platform.LocalContext.current
     // Customer Info Fields
     var fullName by remember { mutableStateOf("") }
     var primaryPhone by remember { mutableStateOf("") }
+    var photoUri by remember { mutableStateOf("") }
     var notes by remember { mutableStateOf("") }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val localPath = try {
+                val dir = java.io.File(context.filesDir, "customer_photos").apply { mkdirs() }
+                val destFile = java.io.File(dir, "cust_${System.currentTimeMillis()}.jpg")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    destFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                destFile.absolutePath
+            } catch (e: Exception) {
+                uri.toString()
+            }
+            photoUri = localPath
+        }
+    }
 
     // Celebration Details Fields
     val celebrationTypes = listOf("Birthday", "Anniversary", "Graduation", "Holiday", "Wedding", "Other")
@@ -109,18 +140,24 @@ fun CustomerRegistrationScreen(
             viewModel.saveCustomer(
                 name = fullName.trim(),
                 phone = primaryPhone.trim(),
+                photoUri = photoUri,
                 notes = notes.trim()
             ) { newCustId ->
-                viewModel.saveCelebration(
-                    customerId = newCustId,
-                    name = "$selectedForWho's $selectedCelebrationType",
-                    personCelebrated = selectedForWho,
-                    ethMonth = selectedEthDate.month,
-                    ethDay = selectedEthDate.day,
-                    recurrenceCycle = if (selectedRepeat == "1 Year") "YEARLY" else if (selectedRepeat == "1 Month") "MONTHLY" else "NONE",
-                    reminderDaysBefore = 7,
-                    notes = "Registered via Add Customer form"
-                ) {
+                if (reminderActive) {
+                    viewModel.saveCelebration(
+                        customerId = newCustId,
+                        name = "$selectedForWho's $selectedCelebrationType",
+                        personCelebrated = selectedForWho,
+                        ethMonth = selectedEthDate.month,
+                        ethDay = selectedEthDate.day,
+                        recurrenceCycle = if (selectedRepeat == "1 Year") "YEARLY" else if (selectedRepeat == "1 Month") "MONTHLY" else "NONE",
+                        reminderDaysBefore = 7,
+                        notes = "Registered via Add Customer form"
+                    ) {
+                        isSaving = false
+                        onCustomerSaved(newCustId)
+                    }
+                } else {
                     isSaving = false
                     onCustomerSaved(newCustId)
                 }
@@ -191,21 +228,34 @@ fun CustomerRegistrationScreen(
                         .size(72.dp)
                         .clip(CircleShape)
                         .background(MakiLightBlue)
-                        .clickable { /* Photo Picker */ },
+                        .clickable {
+                            photoPickerLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                            )
+                        },
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CameraAlt,
-                        contentDescription = "Choose Photo",
-                        tint = MakiPrimaryBlue,
-                        modifier = Modifier.size(28.dp)
-                    )
+                    if (photoUri.isNotBlank()) {
+                        AsyncImage(
+                            model = photoUri,
+                            contentDescription = strings.selectPhoto,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Default.CameraAlt,
+                            contentDescription = strings.selectPhoto,
+                            tint = MakiPrimaryBlue,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text(
-                    text = "Choose Photo (Optional)",
+                    text = if (photoUri.isNotBlank()) strings.changePhoto else strings.selectPhoto,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Medium,
                     color = MakiTextSecondary

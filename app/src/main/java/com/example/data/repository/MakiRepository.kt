@@ -20,7 +20,10 @@ import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.LocalDate
 
-class MakiRepository(private val db: MakiDatabase) {
+class MakiRepository(
+    private val db: MakiDatabase,
+    private val context: android.content.Context? = null
+) {
 
     val allProducts: Flow<List<ProductEntity>> = db.productDao().getAllProducts()
     val activeProducts: Flow<List<ProductEntity>> = db.productDao().getActiveProducts()
@@ -29,6 +32,7 @@ class MakiRepository(private val db: MakiDatabase) {
     val allSales: Flow<List<SaleEntity>> = db.saleDao().getAllSales()
     val allMovements: Flow<List<InventoryMovementEntity>> = db.inventoryMovementDao().getAllMovements()
     val allCustomers: Flow<List<CustomerEntity>> = db.customerDao().getAllCustomers()
+    val activeCustomers: Flow<List<CustomerEntity>> = db.customerDao().getActiveCustomers()
     val allCelebrations: Flow<List<CelebrationEntity>> = db.celebrationDao().getAllCelebrations()
     val activeCelebrations: Flow<List<CelebrationEntity>> = db.celebrationDao().getActiveCelebrations()
     val allExpenses: Flow<List<ExpenseEntity>> = db.expenseDao().getAllExpenses()
@@ -206,6 +210,23 @@ class MakiRepository(private val db: MakiDatabase) {
                 )
             )
 
+            // Record into previous gifts history for CRM retention
+            if (customerId != null && customerId > 0) {
+                db.previousGiftDao().insert(
+                    com.example.data.local.entity.PreviousGiftEntity(
+                        customerId = customerId,
+                        giftItemName = product.name,
+                        purchaseDateGregorian = LocalDate.now().toString(),
+                        purchaseDateEthiopian = ethDateStr,
+                        quantity = quantity,
+                        purchasePrice = financials.purchasePrice.toDouble(),
+                        sellingPrice = financials.sellingPrice.toDouble(),
+                        customizationDetails = notes,
+                        recipient = customerName ?: ""
+                    )
+                )
+            }
+
             sale.copy(id = saleId)
         }
     }
@@ -249,6 +270,10 @@ class MakiRepository(private val db: MakiDatabase) {
     }
 
     // --- Customer & CRM ---
+    suspend fun archiveCustomer(id: Long) = withContext(Dispatchers.IO) {
+        db.customerDao().archiveCustomer(id)
+    }
+
     suspend fun saveCustomer(customer: CustomerEntity): Long = withContext(Dispatchers.IO) {
         if (customer.id == 0L) {
             db.customerDao().insert(customer)
@@ -287,19 +312,14 @@ class MakiRepository(private val db: MakiDatabase) {
     // --- Backup & Restore ---
     suspend fun exportBackupJson(): String = withContext(Dispatchers.IO) {
         val root = JSONObject()
-        root.put("schema_version", 1)
+        root.put("schema_version", 2)
         root.put("app_name", "MAKI BRANDS")
         root.put("app_version", "1.0.0")
         root.put("export_timestamp", System.currentTimeMillis())
 
         // Products
         val products = JSONArray()
-        // Query synchronous lists for backup
-        db.run {
-            // Read all entities
-        }
-        val pList = db.openHelper.readableDatabase.query("SELECT * FROM products").use { cursor ->
-            val list = mutableListOf<JSONObject>()
+        db.openHelper.readableDatabase.query("SELECT * FROM products").use { cursor ->
             while (cursor.moveToNext()) {
                 val obj = JSONObject()
                 obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
@@ -312,17 +332,14 @@ class MakiRepository(private val db: MakiDatabase) {
                 obj.put("description", cursor.getString(cursor.getColumnIndexOrThrow("description")))
                 obj.put("isArchived", cursor.getInt(cursor.getColumnIndexOrThrow("isArchived")) == 1)
                 obj.put("createdAt", cursor.getLong(cursor.getColumnIndexOrThrow("createdAt")))
-                list.add(obj)
+                products.put(obj)
             }
-            list
         }
-        pList.forEach { products.put(it) }
         root.put("products", products)
 
         // Sales
         val sales = JSONArray()
-        val sList = db.openHelper.readableDatabase.query("SELECT * FROM sales").use { cursor ->
-            val list = mutableListOf<JSONObject>()
+        db.openHelper.readableDatabase.query("SELECT * FROM sales").use { cursor ->
             while (cursor.moveToNext()) {
                 val obj = JSONObject()
                 obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
@@ -345,41 +362,73 @@ class MakiRepository(private val db: MakiDatabase) {
                 obj.put("voidReason", cursor.getString(cursor.getColumnIndexOrThrow("voidReason")))
                 val voidTIdx = cursor.getColumnIndexOrThrow("voidTimestamp")
                 if (!cursor.isNull(voidTIdx)) obj.put("voidTimestamp", cursor.getLong(voidTIdx))
-                list.add(obj)
+                sales.put(obj)
             }
-            list
         }
-        sList.forEach { sales.put(it) }
         root.put("sales", sales)
 
         // Customers
         val customers = JSONArray()
-        val cList = db.openHelper.readableDatabase.query("SELECT * FROM customers").use { cursor ->
-            val list = mutableListOf<JSONObject>()
+        db.openHelper.readableDatabase.query("SELECT * FROM customers").use { cursor ->
             while (cursor.moveToNext()) {
                 val obj = JSONObject()
                 obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
                 obj.put("fullName", cursor.getString(cursor.getColumnIndexOrThrow("fullName")))
                 obj.put("phoneNumber", cursor.getString(cursor.getColumnIndexOrThrow("phoneNumber")))
+                obj.put("alternativePhone", cursor.getString(cursor.getColumnIndexOrThrow("alternativePhone")))
+                val photoCol = cursor.getColumnIndex("photoUri")
+                val uriStr = if (photoCol >= 0 && !cursor.isNull(photoCol)) cursor.getString(photoCol) else ""
+                obj.put("photoUri", uriStr)
+                if (uriStr.isNotBlank()) {
+                    try {
+                        val file = java.io.File(uriStr)
+                        if (file.exists() && file.length() < 2 * 1024 * 1024) {
+                            val b64 = android.util.Base64.encodeToString(file.readBytes(), android.util.Base64.NO_WRAP)
+                            obj.put("photoBase64", b64)
+                        } else if (context != null && uriStr.startsWith("content://")) {
+                            context.contentResolver.openInputStream(android.net.Uri.parse(uriStr))?.use { input ->
+                                val bytes = input.readBytes()
+                                if (bytes.size < 2 * 1024 * 1024) {
+                                    val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+                                    obj.put("photoBase64", b64)
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        // ignore file read error
+                    }
+                }
+                obj.put("gender", cursor.getString(cursor.getColumnIndexOrThrow("gender")))
+                obj.put("address", cursor.getString(cursor.getColumnIndexOrThrow("address")))
+                obj.put("city", cursor.getString(cursor.getColumnIndexOrThrow("city")))
                 obj.put("notes", cursor.getString(cursor.getColumnIndexOrThrow("notes")))
+                obj.put("giftPreferences", cursor.getString(cursor.getColumnIndexOrThrow("giftPreferences")))
+                obj.put("preferredLanguage", cursor.getString(cursor.getColumnIndexOrThrow("preferredLanguage")))
+                obj.put("preferredContactMethod", cursor.getString(cursor.getColumnIndexOrThrow("preferredContactMethod")))
+                obj.put("marketingConsent", cursor.getInt(cursor.getColumnIndexOrThrow("marketingConsent")) == 1)
+                val isArchCol = cursor.getColumnIndex("isArchived")
+                if (isArchCol >= 0) {
+                    obj.put("isArchived", cursor.getInt(isArchCol) == 1)
+                } else {
+                    obj.put("isArchived", false)
+                }
                 obj.put("createdAt", cursor.getLong(cursor.getColumnIndexOrThrow("createdAt")))
-                list.add(obj)
+                customers.put(obj)
             }
-            list
         }
-        cList.forEach { customers.put(it) }
         root.put("customers", customers)
 
         // Celebrations
         val celebrations = JSONArray()
-        val celList = db.openHelper.readableDatabase.query("SELECT * FROM celebrations").use { cursor ->
-            val list = mutableListOf<JSONObject>()
+        db.openHelper.readableDatabase.query("SELECT * FROM celebrations").use { cursor ->
             while (cursor.moveToNext()) {
                 val obj = JSONObject()
                 obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
                 obj.put("customerId", cursor.getLong(cursor.getColumnIndexOrThrow("customerId")))
                 obj.put("celebrationName", cursor.getString(cursor.getColumnIndexOrThrow("celebrationName")))
+                obj.put("celebrationCategory", cursor.getString(cursor.getColumnIndexOrThrow("celebrationCategory")))
                 obj.put("personCelebrated", cursor.getString(cursor.getColumnIndexOrThrow("personCelebrated")))
+                obj.put("relationship", cursor.getString(cursor.getColumnIndexOrThrow("relationship")))
                 obj.put("ethMonth", cursor.getInt(cursor.getColumnIndexOrThrow("ethMonth")))
                 obj.put("ethDay", cursor.getInt(cursor.getColumnIndexOrThrow("ethDay")))
                 obj.put("recurrenceCycle", cursor.getString(cursor.getColumnIndexOrThrow("recurrenceCycle")))
@@ -388,28 +437,92 @@ class MakiRepository(private val db: MakiDatabase) {
                 obj.put("isActive", cursor.getInt(cursor.getColumnIndexOrThrow("isActive")) == 1)
                 val notIdx = cursor.getColumnIndexOrThrow("lastNotifiedTimestamp")
                 if (!cursor.isNull(notIdx)) obj.put("lastNotifiedTimestamp", cursor.getLong(notIdx))
-                list.add(obj)
+                celebrations.put(obj)
             }
-            list
         }
-        celList.forEach { celebrations.put(it) }
         root.put("celebrations", celebrations)
 
         // Categories
         val categories = JSONArray()
-        val catList = db.openHelper.readableDatabase.query("SELECT * FROM categories").use { cursor ->
-            val list = mutableListOf<JSONObject>()
+        db.openHelper.readableDatabase.query("SELECT * FROM categories").use { cursor ->
             while (cursor.moveToNext()) {
                 val obj = JSONObject()
                 obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
                 obj.put("name", cursor.getString(cursor.getColumnIndexOrThrow("name")))
                 obj.put("iconName", cursor.getString(cursor.getColumnIndexOrThrow("iconName")))
-                list.add(obj)
+                categories.put(obj)
             }
-            list
         }
-        catList.forEach { categories.put(it) }
         root.put("categories", categories)
+
+        // Inventory Movements
+        val movements = JSONArray()
+        db.openHelper.readableDatabase.query("SELECT * FROM inventory_movements").use { cursor ->
+            while (cursor.moveToNext()) {
+                val obj = JSONObject()
+                obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
+                obj.put("productId", cursor.getLong(cursor.getColumnIndexOrThrow("productId")))
+                obj.put("productNameSnapshot", cursor.getString(cursor.getColumnIndexOrThrow("productNameSnapshot")))
+                obj.put("movementType", cursor.getString(cursor.getColumnIndexOrThrow("movementType")))
+                obj.put("quantityDelta", cursor.getInt(cursor.getColumnIndexOrThrow("quantityDelta")))
+                obj.put("previousQuantity", cursor.getInt(cursor.getColumnIndexOrThrow("previousQuantity")))
+                obj.put("newQuantity", cursor.getInt(cursor.getColumnIndexOrThrow("newQuantity")))
+                obj.put("reason", cursor.getString(cursor.getColumnIndexOrThrow("reason")))
+                obj.put("timestamp", cursor.getLong(cursor.getColumnIndexOrThrow("timestamp")))
+                obj.put("ethiopianDateStr", cursor.getString(cursor.getColumnIndexOrThrow("ethiopianDateStr")))
+                movements.put(obj)
+            }
+        }
+        root.put("inventory_movements", movements)
+
+        // Previous Gifts
+        val previousGifts = JSONArray()
+        db.openHelper.readableDatabase.query("SELECT * FROM previous_gifts").use { cursor ->
+            while (cursor.moveToNext()) {
+                val obj = JSONObject()
+                obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
+                obj.put("customerId", cursor.getLong(cursor.getColumnIndexOrThrow("customerId")))
+                obj.put("giftItemName", cursor.getString(cursor.getColumnIndexOrThrow("giftItemName")))
+                obj.put("purchaseDateGregorian", cursor.getString(cursor.getColumnIndexOrThrow("purchaseDateGregorian")))
+                obj.put("purchaseDateEthiopian", cursor.getString(cursor.getColumnIndexOrThrow("purchaseDateEthiopian")))
+                obj.put("quantity", cursor.getInt(cursor.getColumnIndexOrThrow("quantity")))
+                obj.put("purchasePrice", cursor.getDouble(cursor.getColumnIndexOrThrow("purchasePrice")))
+                obj.put("sellingPrice", cursor.getDouble(cursor.getColumnIndexOrThrow("sellingPrice")))
+                obj.put("customizationDetails", cursor.getString(cursor.getColumnIndexOrThrow("customizationDetails")))
+                obj.put("recipient", cursor.getString(cursor.getColumnIndexOrThrow("recipient")))
+                obj.put("createdAt", cursor.getLong(cursor.getColumnIndexOrThrow("createdAt")))
+                previousGifts.put(obj)
+            }
+        }
+        root.put("previous_gifts", previousGifts)
+
+        // Expenses
+        val expenses = JSONArray()
+        db.openHelper.readableDatabase.query("SELECT * FROM expenses").use { cursor ->
+            while (cursor.moveToNext()) {
+                val obj = JSONObject()
+                obj.put("id", cursor.getLong(cursor.getColumnIndexOrThrow("id")))
+                obj.put("title", cursor.getString(cursor.getColumnIndexOrThrow("title")))
+                obj.put("amount", cursor.getDouble(cursor.getColumnIndexOrThrow("amount")))
+                obj.put("category", cursor.getString(cursor.getColumnIndexOrThrow("category")))
+                obj.put("timestamp", cursor.getLong(cursor.getColumnIndexOrThrow("timestamp")))
+                obj.put("notes", cursor.getString(cursor.getColumnIndexOrThrow("notes")))
+                expenses.put(obj)
+            }
+        }
+        root.put("expenses", expenses)
+
+        // App Settings
+        val settings = JSONArray()
+        db.openHelper.readableDatabase.query("SELECT * FROM app_settings").use { cursor ->
+            while (cursor.moveToNext()) {
+                val obj = JSONObject()
+                obj.put("key", cursor.getString(cursor.getColumnIndexOrThrow("key")))
+                obj.put("value", cursor.getString(cursor.getColumnIndexOrThrow("value")))
+                settings.put(obj)
+            }
+        }
+        root.put("app_settings", settings)
 
         root.toString(2)
     }
@@ -417,11 +530,17 @@ class MakiRepository(private val db: MakiDatabase) {
     suspend fun parseBackupPreview(jsonContent: String): BackupPreview = withContext(Dispatchers.Default) {
         val root = JSONObject(jsonContent)
         val schemaVersion = root.optInt("schema_version", 1)
+        if (schemaVersion <= 0 || schemaVersion > 3) {
+            throw IllegalArgumentException("Unsupported backup format or schema version: $schemaVersion")
+        }
         val exportTimestamp = root.optLong("export_timestamp", 0L)
         val productsCount = root.optJSONArray("products")?.length() ?: 0
         val salesCount = root.optJSONArray("sales")?.length() ?: 0
         val customersCount = root.optJSONArray("customers")?.length() ?: 0
         val celebrationsCount = root.optJSONArray("celebrations")?.length() ?: 0
+        val movementCount = root.optJSONArray("inventory_movements")?.length() ?: 0
+        val expenseCount = root.optJSONArray("expenses")?.length() ?: 0
+        val settingCount = root.optJSONArray("app_settings")?.length() ?: 0
 
         BackupPreview(
             schemaVersion = schemaVersion,
@@ -429,17 +548,37 @@ class MakiRepository(private val db: MakiDatabase) {
             productCount = productsCount,
             saleCount = salesCount,
             customerCount = customersCount,
-            celebrationCount = celebrationsCount
+            celebrationCount = celebrationsCount,
+            movementCount = movementCount,
+            expenseCount = expenseCount,
+            settingCount = settingCount
         )
     }
 
     suspend fun restoreBackupJson(jsonContent: String) = withContext(Dispatchers.IO) {
         val root = JSONObject(jsonContent)
+        val schemaVersion = root.optInt("schema_version", 0)
+        if (schemaVersion <= 0 || schemaVersion > 3) {
+            throw IllegalArgumentException("Unsupported or invalid backup file schema version: $schemaVersion")
+        }
+
+        // Validate that if any entity array property is present, it is actually a valid JSON Array
+        val arrayKeys = listOf("products", "sales", "customers", "celebrations", "categories", "inventory_movements", "previous_gifts", "expenses", "app_settings")
+        for (key in arrayKeys) {
+            if (root.has(key) && root.optJSONArray(key) == null) {
+                throw IllegalArgumentException("Corrupted backup format: field '$key' must be a valid JSON array")
+            }
+        }
+
         val pArray = root.optJSONArray("products") ?: JSONArray()
         val sArray = root.optJSONArray("sales") ?: JSONArray()
         val cArray = root.optJSONArray("customers") ?: JSONArray()
         val celArray = root.optJSONArray("celebrations") ?: JSONArray()
         val catArray = root.optJSONArray("categories") ?: JSONArray()
+        val movArray = root.optJSONArray("inventory_movements") ?: JSONArray()
+        val giftArray = root.optJSONArray("previous_gifts") ?: JSONArray()
+        val expArray = root.optJSONArray("expenses") ?: JSONArray()
+        val setArray = root.optJSONArray("app_settings") ?: JSONArray()
 
         db.withTransaction {
             // Restore products
@@ -493,12 +632,43 @@ class MakiRepository(private val db: MakiDatabase) {
             val customers = mutableListOf<CustomerEntity>()
             for (i in 0 until cArray.length()) {
                 val o = cArray.getJSONObject(i)
+                val photoUriStr = o.optString("photoUri", "")
+                val b64 = o.optString("photoBase64", "")
+                val resolvedPhotoUri = if (b64.isNotBlank()) {
+                    try {
+                        val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
+                        val targetDir = if (context != null) {
+                            java.io.File(context.filesDir, "customer_photos").apply { mkdirs() }
+                        } else {
+                            val tmpDir = java.io.File(System.getProperty("java.io.tmpdir") ?: "/tmp", "customer_photos")
+                            tmpDir.apply { mkdirs() }
+                        }
+                        val restoredFile = java.io.File(targetDir, "cust_restored_${o.getLong("id")}.jpg")
+                        restoredFile.writeBytes(bytes)
+                        restoredFile.absolutePath
+                    } catch (e: Exception) {
+                        photoUriStr
+                    }
+                } else {
+                    photoUriStr
+                }
+
                 customers.add(
                     CustomerEntity(
                         id = o.getLong("id"),
                         fullName = o.getString("fullName"),
                         phoneNumber = o.getString("phoneNumber"),
+                        alternativePhone = o.optString("alternativePhone", ""),
+                        photoUri = resolvedPhotoUri,
+                        gender = o.optString("gender", ""),
+                        address = o.optString("address", ""),
+                        city = o.optString("city", "Addis Ababa"),
                         notes = o.optString("notes", ""),
+                        giftPreferences = o.optString("giftPreferences", ""),
+                        preferredLanguage = o.optString("preferredLanguage", "English"),
+                        preferredContactMethod = o.optString("preferredContactMethod", "WhatsApp"),
+                        marketingConsent = o.optBoolean("marketingConsent", true),
+                        isArchived = o.optBoolean("isArchived", false),
                         createdAt = o.optLong("createdAt", System.currentTimeMillis())
                     )
                 )
@@ -513,7 +683,9 @@ class MakiRepository(private val db: MakiDatabase) {
                         id = o.getLong("id"),
                         customerId = o.getLong("customerId"),
                         celebrationName = o.getString("celebrationName"),
+                        celebrationCategory = o.optString("celebrationCategory", "Birthday"),
                         personCelebrated = o.getString("personCelebrated"),
+                        relationship = o.optString("relationship", "Mother"),
                         ethMonth = o.getInt("ethMonth"),
                         ethDay = o.getInt("ethDay"),
                         recurrenceCycle = o.optString("recurrenceCycle", "YEARLY"),
@@ -525,16 +697,112 @@ class MakiRepository(private val db: MakiDatabase) {
                 )
             }
 
+            // Restore categories
+            val categories = mutableListOf<CategoryEntity>()
+            for (i in 0 until catArray.length()) {
+                val o = catArray.getJSONObject(i)
+                categories.add(
+                    CategoryEntity(
+                        id = o.getLong("id"),
+                        name = o.getString("name"),
+                        iconName = o.optString("iconName", "gift")
+                    )
+                )
+            }
+
+            // Restore inventory movements
+            val movements = mutableListOf<InventoryMovementEntity>()
+            for (i in 0 until movArray.length()) {
+                val o = movArray.getJSONObject(i)
+                movements.add(
+                    InventoryMovementEntity(
+                        id = o.getLong("id"),
+                        productId = o.getLong("productId"),
+                        productNameSnapshot = o.getString("productNameSnapshot"),
+                        movementType = o.getString("movementType"),
+                        quantityDelta = o.getInt("quantityDelta"),
+                        previousQuantity = o.getInt("previousQuantity"),
+                        newQuantity = o.getInt("newQuantity"),
+                        reason = o.optString("reason", ""),
+                        timestamp = o.optLong("timestamp", System.currentTimeMillis()),
+                        ethiopianDateStr = o.optString("ethiopianDateStr", "")
+                    )
+                )
+            }
+
+            // Restore previous gifts
+            val previousGifts = mutableListOf<com.example.data.local.entity.PreviousGiftEntity>()
+            for (i in 0 until giftArray.length()) {
+                val o = giftArray.getJSONObject(i)
+                previousGifts.add(
+                    com.example.data.local.entity.PreviousGiftEntity(
+                        id = o.getLong("id"),
+                        customerId = o.getLong("customerId"),
+                        giftItemName = o.getString("giftItemName"),
+                        purchaseDateGregorian = o.optString("purchaseDateGregorian", ""),
+                        purchaseDateEthiopian = o.optString("purchaseDateEthiopian", ""),
+                        quantity = o.optInt("quantity", 1),
+                        purchasePrice = o.optDouble("purchasePrice", 0.0),
+                        sellingPrice = o.optDouble("sellingPrice", 0.0),
+                        customizationDetails = o.optString("customizationDetails", ""),
+                        recipient = o.optString("recipient", ""),
+                        createdAt = o.optLong("createdAt", System.currentTimeMillis())
+                    )
+                )
+            }
+
+            // Restore expenses
+            val expenses = mutableListOf<com.example.data.local.entity.ExpenseEntity>()
+            for (i in 0 until expArray.length()) {
+                val o = expArray.getJSONObject(i)
+                expenses.add(
+                    com.example.data.local.entity.ExpenseEntity(
+                        id = o.getLong("id"),
+                        title = o.getString("title"),
+                        amount = o.getDouble("amount"),
+                        category = o.optString("category", "General"),
+                        timestamp = o.optLong("timestamp", System.currentTimeMillis()),
+                        notes = o.optString("notes", "")
+                    )
+                )
+            }
+
+            // Restore settings
+            val settings = mutableListOf<com.example.data.local.entity.AppSettingsEntity>()
+            for (i in 0 until setArray.length()) {
+                val o = setArray.getJSONObject(i)
+                settings.add(
+                    com.example.data.local.entity.AppSettingsEntity(
+                        key = o.getString("key"),
+                        value = o.getString("value")
+                    )
+                )
+            }
+
             // Clear old data and insert restored records safely
             db.productDao().clearAll()
             db.saleDao().clearAll()
             db.customerDao().clearAll()
             db.celebrationDao().clearAll()
+            db.inventoryMovementDao().clearAll()
+            db.previousGiftDao().clearAll()
+            db.expenseDao().clearAll()
+            if (categories.isNotEmpty()) {
+                db.categoryDao().clearAll()
+                db.categoryDao().insertAll(categories)
+            }
 
             if (products.isNotEmpty()) db.productDao().insertAll(products)
             if (sales.isNotEmpty()) db.saleDao().insertAll(sales)
             if (customers.isNotEmpty()) db.customerDao().insertAll(customers)
             if (celebrations.isNotEmpty()) db.celebrationDao().insertAll(celebrations)
+            if (movements.isNotEmpty()) db.inventoryMovementDao().insertAll(movements)
+            if (previousGifts.isNotEmpty()) db.previousGiftDao().insertAll(previousGifts)
+            if (expenses.isNotEmpty()) db.expenseDao().insertAll(expenses)
+            if (settings.isNotEmpty()) {
+                db.appSettingsDao().clearAll()
+                db.appSettingsDao().insertAll(settings)
+            }
         }
     }
 }
@@ -545,5 +813,8 @@ data class BackupPreview(
     val productCount: Int,
     val saleCount: Int,
     val customerCount: Int,
-    val celebrationCount: Int
+    val celebrationCount: Int,
+    val movementCount: Int = 0,
+    val expenseCount: Int = 0,
+    val settingCount: Int = 0
 )

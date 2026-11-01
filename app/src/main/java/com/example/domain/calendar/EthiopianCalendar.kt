@@ -85,8 +85,8 @@ object EthiopianCalendarConverter {
      */
     fun toEthiopian(gregorianDate: LocalDate): EthiopianDate {
         val daysSinceEthEpoch = gregorianDate.toEpochDay() - ETHIOPIAN_EPOCH_DIFF
-        val cycle = daysSinceEthEpoch / 1461L
-        val dayInCycle = (daysSinceEthEpoch % 1461L).toInt()
+        val cycle = Math.floorDiv(daysSinceEthEpoch, 1461L)
+        val dayInCycle = Math.floorMod(daysSinceEthEpoch, 1461L).toInt()
 
         val (yearOffset, dayOfYear) = when {
             dayInCycle < 365 -> 0 to dayInCycle
@@ -107,8 +107,8 @@ object EthiopianCalendarConverter {
      */
     fun toGregorian(ethiopianDate: EthiopianDate): LocalDate {
         val y = ethiopianDate.year - 1
-        val cycle = y / 4
-        val yearOffset = y % 4
+        val cycle = Math.floorDiv(y.toLong(), 4L)
+        val yearOffset = Math.floorMod(y.toLong(), 4L).toInt()
 
         val daysInCycleBeforeYear = when (yearOffset) {
             0 -> 0
@@ -125,40 +125,70 @@ object EthiopianCalendarConverter {
     }
 
     /**
-     * Calculates the next upcoming occurrence of a recurring celebration in Gregorian LocalDate,
-     * given its Ethiopian month and day.
+     * Calculates the next upcoming occurrence of a celebration in Gregorian LocalDate,
+     * given its Ethiopian month, day, and recurrence cycle.
      * 
      * @param fromDate current Gregorian date
      * @param ethMonth celebration Ethiopian month (1-13)
      * @param ethDay celebration Ethiopian day
+     * @param recurrenceCycle "YEARLY", "MONTHLY", "EVERY_TWO_YEARS", "NONE"
      * @return next occurrence in LocalDate
      */
     fun getNextCelebrationDate(
         fromDate: LocalDate,
         ethMonth: Int,
-        ethDay: Int
+        ethDay: Int,
+        recurrenceCycle: String = "YEARLY"
     ): LocalDate {
         val currentEth = toEthiopian(fromDate)
         
-        // Clamp day for Pagume if current or next year is not a leap year
-        fun safeDate(y: Int): EthiopianDate {
-            val maxDay = if (ethMonth == 13) {
+        fun safeDate(y: Int, m: Int): EthiopianDate {
+            val maxDay = if (m == 13) {
                 if (EthiopianDate.isEthiopianLeapYear(y)) 6 else 5
             } else 30
-            val validDay = ethDay.coerceAtMost(maxDay)
-            return EthiopianDate(y, ethMonth, validDay)
+            val validDay = ethDay.coerceAtMost(maxDay).coerceAtLeast(1)
+            return EthiopianDate(y, m, validDay)
         }
 
-        // Try this Ethiopian year
-        val thisYearTargetEth = safeDate(currentEth.year)
-        val thisYearGreg = toGregorian(thisYearTargetEth)
-
-        return if (!thisYearGreg.isBefore(fromDate)) {
-            thisYearGreg
-        } else {
-            // Next Ethiopian year
-            val nextYearTargetEth = safeDate(currentEth.year + 1)
-            toGregorian(nextYearTargetEth)
+        return when (recurrenceCycle.uppercase()) {
+            "MONTHLY" -> {
+                // Occurs every month on ethDay
+                val thisMonthDate = safeDate(currentEth.year, currentEth.month)
+                val thisMonthGreg = toGregorian(thisMonthDate)
+                if (!thisMonthGreg.isBefore(fromDate)) {
+                    thisMonthGreg
+                } else {
+                    var nextMonth = currentEth.month + 1
+                    var nextYear = currentEth.year
+                    if (nextMonth > 13) {
+                        nextMonth = 1
+                        nextYear += 1
+                    }
+                    toGregorian(safeDate(nextYear, nextMonth))
+                }
+            }
+            "EVERY_TWO_YEARS" -> {
+                val thisYearTargetEth = safeDate(currentEth.year, ethMonth)
+                val thisYearGreg = toGregorian(thisYearTargetEth)
+                if (!thisYearGreg.isBefore(fromDate)) {
+                    thisYearGreg
+                } else {
+                    toGregorian(safeDate(currentEth.year + 2, ethMonth))
+                }
+            }
+            "NONE" -> {
+                val thisYearTargetEth = safeDate(currentEth.year, ethMonth)
+                toGregorian(thisYearTargetEth)
+            }
+            else -> { // "YEARLY"
+                val thisYearTargetEth = safeDate(currentEth.year, ethMonth)
+                val thisYearGreg = toGregorian(thisYearTargetEth)
+                if (!thisYearGreg.isBefore(fromDate)) {
+                    thisYearGreg
+                } else {
+                    toGregorian(safeDate(currentEth.year + 1, ethMonth))
+                }
+            }
         }
     }
 }
