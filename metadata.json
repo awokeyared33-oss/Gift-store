@@ -1,0 +1,6 @@
+{
+  "name": "MAKI BRANDS",
+  "description": "Professional offline gift shop management and customer celebration CRM app with Ethiopian calendar support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
