@@ -269,6 +269,97 @@ class MakiRepository(
         }
     }
 
+    // --- Multi-Item POS Sale Transaction ---
+    suspend fun recordMultipleSales(
+        items: List<Pair<Long, Int>>,
+        customerId: Long? = null,
+        notes: String = ""
+    ): List<SaleEntity> = withContext(Dispatchers.IO) {
+        db.withTransaction {
+            val results = mutableListOf<SaleEntity>()
+            val ethDateStr = EthiopianCalendarConverter.toEthiopian(LocalDate.now()).format()
+
+            var customerName: String? = null
+            if (customerId != null && customerId > 0) {
+                val customer = db.customerDao().getCustomerById(customerId)
+                customerName = customer?.fullName
+            }
+
+            for ((productId, quantity) in items) {
+                if (quantity <= 0) continue
+                val product = db.productDao().getProductById(productId)
+                    ?: throw IllegalArgumentException("Product not found: #$productId")
+                if (product.stockQuantity < quantity) {
+                    throw IllegalStateException("Insufficient stock for ${product.name}. Available: ${product.stockQuantity}, Requested: $quantity")
+                }
+
+                // Financial calculations using BigDecimal
+                val financials = FinancialCalculator.calculateSaleFinancials(
+                    quantity = quantity,
+                    purchasePrice = BigDecimal.valueOf(product.purchasePrice),
+                    sellingPrice = BigDecimal.valueOf(product.sellingPrice)
+                )
+
+                // Deduct inventory
+                val prevStock = product.stockQuantity
+                val newStock = prevStock - quantity
+                db.productDao().updateStock(productId, newStock)
+
+                // Save sale record with snapshot
+                val sale = SaleEntity(
+                    productId = productId,
+                    productNameSnapshot = product.name,
+                    quantity = quantity,
+                    purchasePriceSnapshot = financials.purchasePrice.toDouble(),
+                    sellingPriceSnapshot = financials.sellingPrice.toDouble(),
+                    totalRevenue = financials.revenue.toDouble(),
+                    totalCost = financials.cost.toDouble(),
+                    grossProfit = financials.grossProfit.toDouble(),
+                    saleTimestamp = System.currentTimeMillis(),
+                    ethiopianDateStr = ethDateStr,
+                    customerId = customerId,
+                    customerNameSnapshot = customerName,
+                    notes = notes
+                )
+                val saleId = db.saleDao().insert(sale)
+
+                // Record inventory movement
+                db.inventoryMovementDao().insert(
+                    InventoryMovementEntity(
+                        productId = productId,
+                        productNameSnapshot = product.name,
+                        movementType = "SALE_DEDUCTION",
+                        quantityDelta = -quantity,
+                        previousQuantity = prevStock,
+                        newQuantity = newStock,
+                        reason = "POS Sale #$saleId ($quantity x ${product.name})",
+                        ethiopianDateStr = ethDateStr
+                    )
+                )
+
+                // Record into previous gifts history for CRM retention
+                if (customerId != null && customerId > 0) {
+                    db.previousGiftDao().insert(
+                        com.example.data.local.entity.PreviousGiftEntity(
+                            customerId = customerId,
+                            giftItemName = product.name,
+                            purchaseDateGregorian = LocalDate.now().toString(),
+                            purchaseDateEthiopian = ethDateStr,
+                            quantity = quantity,
+                            purchasePrice = financials.purchasePrice.toDouble(),
+                            sellingPrice = financials.sellingPrice.toDouble(),
+                            customizationDetails = notes,
+                            recipient = customerName ?: ""
+                        )
+                    )
+                }
+
+                results.add(sale.copy(id = saleId))
+            }
+            results
+        }
+    }
+
     // --- Void Sale with Inventory Restore ---
     suspend fun voidSale(saleId: Long, reason: String) = withContext(Dispatchers.IO) {
         db.withTransaction {

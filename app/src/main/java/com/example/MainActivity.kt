@@ -8,6 +8,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,6 +46,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -64,6 +70,7 @@ import com.example.ui.products.ProductsScreen
 import com.example.ui.reports.ReportsScreen
 import com.example.ui.sales.SalesScreen
 import com.example.ui.settings.SettingsScreen
+import com.example.ui.splash.MakiSplashScreen
 import com.example.ui.theme.MakiBrandsTheme
 import com.example.ui.theme.MakiPrimaryBlue
 import com.example.ui.theme.MakiTextDark
@@ -102,66 +109,79 @@ class MainActivity : ComponentActivity() {
             MakiBrandsTheme {
                 val context = LocalContext.current
                 val strings by viewModel.strings.collectAsStateWithLifecycle()
+                var showSplash by rememberSaveable { mutableStateOf(true) }
                 var currentScreen by remember { mutableStateOf(Screen.DASHBOARD) }
                 var selectedCustomerForProfile by remember { mutableStateOf<CustomerEntity?>(null) }
                 val snackbarHostState = remember { SnackbarHostState() }
                 val scope = rememberCoroutineScope()
 
-                // Android 13+ Notification Permission Request
-                val notificationPermissionLauncher = rememberLauncherForActivityResult(
-                    contract = ActivityResultContracts.RequestPermission()
-                ) { isGranted ->
-                    if (isGranted) {
-                        CelebrationReminderManager.checkAndNotifyCelebrations(context)
-                    }
-                }
-
-                LaunchedEffect(Unit) {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-                        if (androidx.core.content.ContextCompat.checkSelfPermission(
-                                context,
-                                android.Manifest.permission.POST_NOTIFICATIONS
-                            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                        ) {
-                            notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                AnimatedContent(
+                    targetState = showSplash,
+                    transitionSpec = {
+                        fadeIn(animationSpec = tween(400)) togetherWith fadeOut(animationSpec = tween(400))
+                    },
+                    label = "SplashTransition"
+                ) { isSplashActive ->
+                    if (isSplashActive) {
+                        MakiSplashScreen(
+                            onSplashFinished = { showSplash = false }
+                        )
+                    } else {
+                        // Android 13+ Notification Permission Request
+                        val notificationPermissionLauncher = rememberLauncherForActivityResult(
+                            contract = ActivityResultContracts.RequestPermission()
+                        ) { isGranted ->
+                            if (isGranted) {
+                                CelebrationReminderManager.checkAndNotifyCelebrations(context)
+                            }
                         }
-                    }
-                }
 
-                // Listen to ViewModel user messages & toasts
-                LaunchedEffect(Unit) {
-                    viewModel.userMessage.collectLatest { msg ->
-                        scope.launch {
-                            snackbarHostState.showSnackbar(msg)
+                        LaunchedEffect(Unit) {
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                if (androidx.core.content.ContextCompat.checkSelfPermission(
+                                        context,
+                                        android.Manifest.permission.POST_NOTIFICATIONS
+                                    ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                                }
+                            }
                         }
-                    }
-                }
 
-                // Handle Back press for sub-screens
-                when (currentScreen) {
-                    Screen.CUSTOMER_REGISTRATION, Screen.CUSTOMER_PROFILE -> {
-                        BackHandler { currentScreen = Screen.CUSTOMERS }
-                    }
-                    Screen.SALES_HISTORY, Screen.CELEBRATIONS, Screen.REPORTS, Screen.BACKUP, Screen.SETTINGS -> {
-                        BackHandler { currentScreen = Screen.MORE }
-                    }
-                    Screen.PRODUCTS, Screen.SALES, Screen.CUSTOMERS, Screen.MORE -> {
-                        BackHandler { currentScreen = Screen.DASHBOARD }
-                    }
-                    else -> {}
-                }
+                        // Listen to ViewModel user messages & toasts
+                        LaunchedEffect(Unit) {
+                            viewModel.userMessage.collectLatest { msg ->
+                                scope.launch {
+                                    snackbarHostState.showSnackbar(msg)
+                                }
+                            }
+                        }
 
-                val isSubScreen = currentScreen in listOf(
-                    Screen.CUSTOMER_REGISTRATION,
-                    Screen.CUSTOMER_PROFILE,
-                    Screen.SALES_HISTORY,
-                    Screen.CELEBRATIONS,
-                    Screen.REPORTS,
-                    Screen.BACKUP,
-                    Screen.SETTINGS
-                )
+                        // Handle Back press for sub-screens
+                        when (currentScreen) {
+                            Screen.CUSTOMER_REGISTRATION, Screen.CUSTOMER_PROFILE -> {
+                                BackHandler { currentScreen = Screen.CUSTOMERS }
+                            }
+                            Screen.SALES_HISTORY, Screen.CELEBRATIONS, Screen.REPORTS, Screen.BACKUP, Screen.SETTINGS -> {
+                                BackHandler { currentScreen = Screen.MORE }
+                            }
+                            Screen.PRODUCTS, Screen.SALES, Screen.CUSTOMERS, Screen.MORE -> {
+                                BackHandler { currentScreen = Screen.DASHBOARD }
+                            }
+                            else -> {}
+                        }
 
-                Scaffold(
+                        val isSubScreen = currentScreen in listOf(
+                            Screen.CUSTOMER_REGISTRATION,
+                            Screen.CUSTOMER_PROFILE,
+                            Screen.SALES_HISTORY,
+                            Screen.CELEBRATIONS,
+                            Screen.REPORTS,
+                            Screen.BACKUP,
+                            Screen.SETTINGS
+                        )
+
+                        Scaffold(
                     snackbarHost = { SnackbarHost(snackbarHostState) },
                     topBar = {
                         if (isSubScreen && currentScreen != Screen.CUSTOMER_REGISTRATION && currentScreen != Screen.CUSTOMER_PROFILE) {
@@ -367,6 +387,8 @@ class MainActivity : ComponentActivity() {
 
                             Screen.SETTINGS -> SettingsScreen(viewModel = viewModel)
                         }
+                    }
+                }
                     }
                 }
             }

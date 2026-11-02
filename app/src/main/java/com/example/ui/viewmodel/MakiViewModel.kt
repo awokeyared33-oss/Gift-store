@@ -383,6 +383,31 @@ class MakiViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun recordMultiItemSale(
+        items: List<Pair<Long, Int>>,
+        customerId: Long?,
+        notes: String,
+        onSuccess: (List<SaleEntity>) -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val sales = repository.recordMultipleSales(
+                    items = items,
+                    customerId = customerId,
+                    notes = notes
+                )
+                val totalQty = sales.sumOf { it.quantity }
+                _userMessage.emit("Sale confirmed: $totalQty item(s) sold successfully.")
+                onSuccess(sales)
+            } catch (e: Exception) {
+                val msg = e.localizedMessage ?: "Failed to record sale"
+                _userMessage.emit(msg)
+                onError(msg)
+            }
+        }
+    }
+
     fun voidSale(saleId: Long, reason: String, onComplete: () -> Unit) {
         viewModelScope.launch {
             try {

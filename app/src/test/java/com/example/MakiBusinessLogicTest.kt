@@ -785,4 +785,81 @@ class MakiBusinessLogicTest {
         val timeIntent = android.content.Intent(android.content.Intent.ACTION_TIME_CHANGED)
         receiver.onReceive(context, timeIntent)
     }
+
+    @Test
+    fun testRecordMultipleSalesPosTransaction() = runBlocking {
+        // Create 2 test products
+        val p1 = ProductEntity(
+            name = "Chocolate Box Deluxe",
+            category = "Chocolates",
+            purchasePrice = 120.0,
+            sellingPrice = 200.0,
+            stockQuantity = 15
+        )
+        val p2 = ProductEntity(
+            name = "Rose Bouquet Premium",
+            category = "Flowers",
+            purchasePrice = 180.0,
+            sellingPrice = 300.0,
+            stockQuantity = 10
+        )
+        val p1Id = repository.saveProduct(p1)
+        val p2Id = repository.saveProduct(p2)
+
+        // Create a test customer
+        val custId = repository.saveCustomer(
+            CustomerEntity(
+                fullName = "Yared Awoke",
+                phoneNumber = "+251911223344"
+            )
+        )
+
+        // Execute Multi-Item POS Sale: 2x p1 (2 * 200 = 400), 1x p2 (1 * 300 = 300) -> Total = 700 ETB
+        val cart = listOf(p1Id to 2, p2Id to 1)
+        val sales = repository.recordMultipleSales(
+            items = cart,
+            customerId = custId,
+            notes = "Test POS Sale"
+        )
+
+        assertEquals(2, sales.size)
+        val s1 = sales.first { it.productId == p1Id }
+        val s2 = sales.first { it.productId == p2Id }
+
+        assertEquals(2, s1.quantity)
+        assertEquals(400.0, s1.totalRevenue, 0.01)
+        assertEquals(240.0, s1.totalCost, 0.01)
+        assertEquals(160.0, s1.grossProfit, 0.01)
+
+        assertEquals(1, s2.quantity)
+        assertEquals(300.0, s2.totalRevenue, 0.01)
+        assertEquals(180.0, s2.totalCost, 0.01)
+        assertEquals(120.0, s2.grossProfit, 0.01)
+
+        // Verify inventory deducted
+        val updatedP1 = db.productDao().getProductById(p1Id)
+        val updatedP2 = db.productDao().getProductById(p2Id)
+        assertEquals(13, updatedP1!!.stockQuantity)
+        assertEquals(9, updatedP2!!.stockQuantity)
+
+        // Verify customer gift history recorded
+        val gifts = db.previousGiftDao().getPreviousGiftsForCustomer(custId).first()
+        assertEquals(2, gifts.size)
+
+        // Verify Atomic rollback on insufficient stock
+        try {
+            repository.recordMultipleSales(
+                items = listOf(p1Id to 2, p2Id to 999), // p2 only has 9 available
+                customerId = custId
+            )
+            fail("Expected exception on insufficient stock")
+        } catch (e: Exception) {
+            // Expected
+        }
+
+        // P1 stock must NOT have been deducted because transaction rolled back atomically
+        val p1AfterFailed = db.productDao().getProductById(p1Id)
+        assertEquals(13, p1AfterFailed!!.stockQuantity)
+    }
 }
+
